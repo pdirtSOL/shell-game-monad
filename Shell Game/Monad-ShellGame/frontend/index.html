@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Medieval Tavern Shell Game</title>
+<script src="https://cdn.jsdelivr.net/npm/ethers@5.7.2/dist/ethers.umd.min.js"></script>
+<style>
+  body {
+    margin:0;
+    font-family:'Papyrus', fantasy;
+    background:url('https://i.postimg.cc/VvmF6KYx/shell-game.png') no-repeat center center fixed;
+    background-size:cover;
+    text-align:center;
+  }
+  .tavern {
+    background: rgba(239, 194, 146, 0.7);
+    padding:20px;
+    border:5px solid #8b5a2b;
+    border-radius:15px;
+    width:600px;
+    margin:30px auto;
+    box-shadow:0 0 20px #f6e1c964;
+  }
+  button {
+    background:#8b5a2b;
+    border:none;
+    padding:10px 20px;
+    margin:10px;
+    color:#fff;
+    font-size:18px;
+    border-radius:10px;
+    cursor:pointer;
+  }
+  button:hover { background:#a0522d; }
+  .shells {
+    display:flex;
+    justify-content:space-around;
+    margin-top:20px;
+    cursor:pointer;
+  }
+  .shell {
+    width:100px;
+    height:100px;
+    background:url('https://i.postimg.cc/nV5Hyrkt/cup.png') no-repeat center center;
+    background-size:contain;
+    transition: transform 0.3s;
+  }
+  .shell:hover {
+    transform: scale(1.1);
+  }
+
+  /* Shell shake animation */
+  @keyframes shake {
+    0% { transform: translateX(0); }
+    20% { transform: translateX(-10px); }
+    40% { transform: translateX(10px); }
+    60% { transform: translateX(-10px); }
+    80% { transform: translateX(10px); }
+    100% { transform: translateX(0); }
+  }
+  .shell.shaking {
+    animation: shake 1s ease;
+  }
+
+  .scoreboard {
+    margin-top:20px;
+    text-align:left;
+    background: rgba(139,69,19,0.6);
+    padding:10px;
+    border-radius:10px;
+    max-height:200px;
+    overflow-y:auto;
+  }
+</style>
+</head>
+<body>
+<div class="tavern">
+  <h1> Half Shell Tavern </h1>
+  <p>Click a shell, place your bet, and test your luck!</p>
+  <button id="connect">Connect Wallet</button><br>
+  <label>Bet Amount (MON):</label>
+  <input id="bet" type="number" min="0.001" step="0.001" value="0.01"><br>
+  <div class="shells">
+    <div class="shell" data-guess="0"></div>
+    <div class="shell" data-guess="1"></div>
+    <div class="shell" data-guess="2"></div>
+  </div>
+  <button id="fund">Fund Contract</button>
+  <div id="status"></div>
+  <div class="scoreboard">
+    <h3>Recent Plays</h3>
+    <ul id="plays"></ul>
+  </div>
+</div>
+
+<script>
+// --- Contract Config ---
+const contractAddress = "0x20174a2C707144FE97f064B9Ac29fA6FB895B706";
+const abi = [
+  { "inputs": [], "name": "fund", "outputs": [], "stateMutability": "payable", "type": "function" },
+  { "inputs":[{"internalType":"uint8","name":"guess","type":"uint8"}], "name":"play", "outputs": [], "stateMutability":"payable","type":"function" },
+  { "inputs":[{"internalType":"uint256","name":"amount","type":"uint256"}], "name":"withdraw", "outputs": [], "stateMutability":"nonpayable","type":"function" },
+  { "inputs": [], "name": "owner", "outputs":[{"internalType":"address","name":"","type":"address"}], "stateMutability":"view","type":"function" },
+  { "anonymous": false, "inputs":[{"indexed":true,"internalType":"address","name":"player","type":"address"},{"indexed":false,"internalType":"uint256","name":"amount","type":"uint256"},{"indexed":false,"internalType":"bool","name":"win","type":"bool"},{"indexed":false,"internalType":"uint8","name":"guess","type":"uint8"},{"indexed":false,"internalType":"uint8","name":"correct","type":"uint8"}],"name":"Played","type":"event"},
+  { "anonymous": false,"inputs":[{"indexed":true,"internalType":"address","name":"funder","type":"address"},{"indexed":false,"internalType":"uint256","name":"amount","type":"uint256"}],"name":"Funded","type":"event"}
+];
+
+let provider, signer, contract;
+
+// --- Connect Wallet ---
+document.getElementById("connect").onclick = async () => {
+  if (window.ethereum) {
+    try {
+      await ethereum.request({ method: "eth_requestAccounts" });
+      provider = new ethers.providers.Web3Provider(window.ethereum, "any");
+      signer = provider.getSigner();
+      contract = new ethers.Contract(contractAddress, abi, signer);
+      document.getElementById("status").innerText = "✅ Wallet connected!";
+    } catch (err) {
+      document.getElementById("status").innerText = "❌ Connection failed: " + err.message;
+    }
+  } else {
+    alert("MetaMask not detected.");
+  }
+};
+
+// --- Clickable Shells ---
+document.querySelectorAll(".shell").forEach(shell => {
+  shell.onclick = async () => {
+    if (!contract) return document.getElementById("status").innerText = "Connect wallet first.";
+    try {
+      const guess = parseInt(shell.dataset.guess);
+      const bet = document.getElementById("bet").value;
+
+      // Start animation
+      document.getElementById("status").innerText = "🎲 Shuffling shells...";
+      document.querySelectorAll(".shell").forEach(s => s.classList.add("shaking"));
+
+      // Optional visual delay
+      await new Promise(r => setTimeout(r, 800));
+
+      // Send transaction
+      const tx = await contract.play(guess, { value: ethers.utils.parseEther(bet) });
+      const receipt = await tx.wait();
+
+      // Query the Played event for this tx
+      const playedEvent = receipt.events.find(e => e.event === "Played");
+      if (playedEvent) {
+        const [player, amount, win, playerGuess, correct] = playedEvent.args;
+        const payout = win ? ethers.utils.formatEther(amount.mul(2)) : "0";
+        document.getElementById("status").innerText = win
+          ? `🎉 You won ${payout} MON!`
+          : `😢 You lost. Correct shell was ${correct + 1}`;
+
+        const li = document.createElement("li");
+        li.innerText = `${new Date().toLocaleTimeString()} - Bet: ${ethers.utils.formatEther(amount)} MON - ${win ? "Won" : "Lost"} (Guessed: ${playerGuess + 1}, Correct: ${correct + 1})`;
+        document.getElementById("plays").prepend(li);
+      }
+
+      // Stop shaking shells
+      document.querySelectorAll(".shell").forEach(s => s.classList.remove("shaking"));
+
+    } catch (err) {
+      document.getElementById("status").innerText = "❌ Error: " + err.message;
+      document.querySelectorAll(".shell").forEach(s => s.classList.remove("shaking"));
+    }
+  };
+});
+
+// --- Fund Contract ---
+document.getElementById("fund").onclick = async () => {
+  if (!contract) return document.getElementById("status").innerText = "Connect wallet first.";
+  try {
+    const amount = prompt("Enter MON amount to fund:");
+    if (!amount) return;
+    const tx = await contract.fund({ value: ethers.utils.parseEther(amount) });
+    document.getElementById("status").innerText = "💰 Funding contract...";
+    await tx.wait();
+    document.getElementById("status").innerText = `✅ Funded with ${amount} MON!`;
+  } catch (err) {
+    document.getElementById("status").innerText = "❌ Error: " + err.message;
+  }
+};
+</script>
+</body>
+</html>
